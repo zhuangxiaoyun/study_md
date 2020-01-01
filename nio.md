@@ -172,6 +172,22 @@ kernel的**数据复制**是将数据从内核缓冲区拷贝到用户程序空�
 
 #### 1、基本概念
 
+##### 1、IO和NIO的区别
+
+​	IO=>水流
+
+​	NIO：通道channel=>铁路，缓冲区buffer=>火车
+
+| IO     | NIO                |
+| ------ | ------------------ |
+| 面向流 | 面向缓冲区         |
+| 阻塞IO | 非阻塞IO           |
+|        | 选择器(Sselectors) |
+
+##### 2、基础元素
+
+**channel负责传输，buffer负责存储**
+
 channel：
 
 ​	FileChannel
@@ -188,7 +204,9 @@ buffer：
 
 selector：
 
-### 2、buffer操作
+#### 2、buffer
+
+​	作用：在java NIO中负责数据的存取，缓冲区就是数组，用于存储不同数据类型的数据
 
 ​	函数：
 
@@ -203,7 +221,7 @@ selector：
 | 重读                                                         | rewind()                      |
 | compact()方法将所有未读的数据拷贝到Buffer起始处。然后将position设到最后一个未读元素正后面 | compact()                     |
 
-​	索引：
+​	索引：**mark<=limit<=position<=capacity**
 
 | 索引     | 说明                                                    |
 | -------- | ------------------------------------------------------- |
