@@ -107,3 +107,213 @@ sink:幂等和事务(预写日志WAL，两段式提交2PC)
 ### 3.模式组
 
 订单超时: 通过超时的侧输出流
+
+## 14、flink运行
+
+### 1、job运行的环境
+
+org.apache.flink.streaming.scala.examples.windowing.WindowWordCount示例入口
+
+api job, 非sql job
+
+1. ```scala
+   
+   val env = StreamExecutionEnvironment.getExecutionEnvironment//scala代码获取执行环境
+   ```
+
+   
+
+2. ```scala
+   def getExecutionEnvironment: StreamExecutionEnvironment = {
+   	//scala的StreamExecutionEnvironment的构造器需要一个java类型的StreamExecutionEnvironment【JavaEnv是java类型的StreamExecutionEnvironment的别名】
+       new StreamExecutionEnvironment(JavaEnv.getExecutionEnvironment)
+     }
+   ```
+
+3. ```java
+   //JavaEnv.getExecutionEnvironment：java代码获取执行环境
+   
+   public static StreamExecutionEnvironment getExecutionEnvironment() {
+       return Utils.resolveFactory(threadLocalContextEnvironmentFactory, contextEnvironmentFactory)//如果设置了threadLocalContextEnvironmentFactory，则从此threadLocal中获取Factory；若未设置，则直接获取入参的contextEnvironmentFactory
+           .map(StreamExecutionEnvironmentFactory::createExecutionEnvironment)//调用factory的createExecutionEnvironment获取执行环境
+          .orElseGet(StreamExecutionEnvironment::createStreamExecutionEnvironment);//如果factory获取不到执行环境，则调用StreamExecutionEnvironment的createStreamExecutionEnvironment方法获取
+   }
+   ```
+
+4. ```java
+   //StreamExecutionEnvironment::createStreamExecutionEnvironment
+   private static StreamExecutionEnvironment createStreamExecutionEnvironment() {
+       ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+       if (env instanceof ContextEnvironment) {
+           return new StreamContextEnvironment((ContextEnvironment) env);
+       } else if (env instanceof OptimizerPlanEnvironment) {
+           return new StreamPlanEnvironment(env);
+       } else {
+           return createLocalEnvironment();
+       }
+   }
+   ```
+
+5. ```java
+   //ExecutionEnvironment.getExecutionEnvironment();
+   public static ExecutionEnvironment getExecutionEnvironment() {
+       return Utils.resolveFactory(threadLocalContextEnvironmentFactory, contextEnvironmentFactory)//CLI client中会设置为ContextEnvironmentFactory；web frontend中会调用org.apache.flink.client.program.OptimizerPlanEnvironment#setAsContext设置为可以返回OptimizerPlanEnvironment的匿名内部类
+           .map(ExecutionEnvironmentFactory::createExecutionEnvironment)
+           .orElseGet(ExecutionEnvironment::createLocalEnvironment);//local执行的时候未设置threadLocal，所有最后创建的是LocalEnvironment
+   }
+   ```
+
+6. 总结：
+
+   1. 如果在StreamExecutionEnvironment的threadLocalContextEnvironmentFactory设置了执行环境，则直接获取
+   2. 否则通过获取一个执行环境：ExecutionEnvironment.getExecutionEnvironment()
+      1. 如果ExecutionEnvironment的threadLocalContextEnvironmentFactory设置了执行环境，则直接获取
+         1. CLI client中会设置为ContextEnvironmentFactory；【createExecutionEnvironment()返回ContextEnvironment】
+         2. web frontend中会调用org.apache.flink.client.program.OptimizerPlanEnvironment#setAsContext设置为可以createExecutionEnvironment()返回OptimizerPlanEnvironment的匿名内部类
+      2. 否则创建本地执行环境：LocalEnvironment
+   3. 判断获取的ExecutionEnvironment
+      1. ContextEnvironment，则创建StreamContextEnvironment
+         1. 在CLI 
+      2. OptimizerPlanEnvironment，则创建StreamPlanEnvironment
+         1. 在web 
+      3. 其他，则创建LocalEnvironmen
+
+7. 杂记：
+
+   1. orElse()和orElseGet()相同点和区别
+
+      1. 相同点：都是在optional中值为空的时候返回的值
+
+      2. 区别
+
+         1. orElse()的入参数是数据T【对应的类型值】，orElseGet()的入参是方法 Supplier<? extends T> other
+
+         2. 无论optional中是否有值，orElse()中若是调用了方法，此方法都会被调用
+
+         3. 只有在optional中无值，orElseGet()中的方法才会被调用
+
+            ![1585475760597](C:\Users\zxy\AppData\Roaming\Typora\typora-user-images\1585475760597.png)
+
+### 2、job执行过程
+
+1. api job 
+
+   1. ```scala
+      eg: env.execute("WindowWordCount")
+      def execute(jobName: String) = javaEnv.execute(jobName)//执行任务
+      ```
+
+   2. ```java
+      public JobExecutionResult execute(String jobName) throws Exception {
+      		Preconditions.checkNotNull(jobName, "Streaming Job name should not be null.");
+      
+      		return execute(getStreamGraph(jobName));//StreamExecutionEnvironment的部分子类重写了此方法，即不同的子类会有不同的启动流程
+      	}
+      ```
+
+      ==getStreamGraph(jobName)；//todo  后续需要详细了解==
+
+      
+
+   3. ```java
+      //StreamExecutionEnvironment的execute
+      JobClient jobClient = executeAsync(streamGraph);
+      
+      //executeAsync方法
+      final PipelineExecutorFactory executorFactory =
+      			executorServiceLoader.getExecutorFactory(configuration);
+      //获取执行器工厂executorFactory
+      /**
+      1、ServiceLoader.load(PipelineExecutorFactory.class)：使用SPI获取PipelineExecutorFactory的子类【从classpath路径下的/META-INFO/services文件夹中加载文件名为org.apache.flink.core.execution.PipelineExecutorFactory中配置的所有类】
+      2、factory != null && factory.isCompatibleWith(configuration)
+      3、如果查询出多个factory，则抛异常
+      */
+      		.....
+      		CompletableFuture<JobClient> jobClientFuture = executorFactory
+      			.getExecutor(configuration)//从执行器工厂获取执行器
+      			.execute(streamGraph, configuration);//执行streamGraph
+      ```
+
+      PipelineExecutorFactory的所有子类：
+
+      ![1585491429929](C:\Users\zxy\AppData\Roaming\Typora\typora-user-images\1585491429929.png)
+
+   4. ```java
+      //LocalExecutor的执行过程
+      public CompletableFuture<JobClient> execute(Pipeline pipeline, Configuration configuration) throws Exception {
+          checkNotNull(pipeline);
+          checkNotNull(configuration);
+      
+          // we only support attached execution with the local executor.
+          checkState(configuration.getBoolean(DeploymentOptions.ATTACHED));
+      //TODO 后续需要了解如何从streamGraph转变成jobGraph的
+          final JobGraph jobGraph = getJobGraph(pipeline, configuration);
+          //本地启动最小集群
+          final MiniCluster miniCluster = startMiniCluster(jobGraph, configuration);
+          //获取最小集群客户端
+          final MiniClusterClient clusterClient = new MiniClusterClient(configuration, miniCluster);
+      	//集群客服端提交jobGraph
+          CompletableFuture<JobID> jobIdFuture = clusterClient.submitJob(jobGraph);
+      	
+          jobIdFuture
+              .thenCompose(clusterClient::requestJobResult)//submitJob和requestJobResult进行合并
+              .thenAccept((jobResult) -> clusterClient.shutDownCluster());//集群客户端停止集群
+      
+          return jobIdFuture.thenApply(jobID ->
+                                       new ClusterClientJobClientAdapter<>(() -> clusterClient, jobID));
+      }
+      ```
+
+   5. ```java
+      //RemoteExecutor extends AbstractSessionClusterExecutor
+      
+      public CompletableFuture<JobClient> execute(@Nonnull final Pipeline pipeline, @Nonnull final Configuration configuration) throws Exception {
+          final JobGraph jobGraph = ExecutorUtils.getJobGraph(pipeline, configuration);
+      
+          try (final ClusterDescriptor<ClusterID> clusterDescriptor = clusterClientFactory.createClusterDescriptor(configuration)) {
+              final ClusterID clusterID = clusterClientFactory.getClusterId(configuration);
+              checkState(clusterID != null);
+      
+              final ClusterClientProvider<ClusterID> clusterClientProvider = clusterDescriptor.retrieve(clusterID);
+              ClusterClient<ClusterID> clusterClient = clusterClientProvider.getClusterClient();
+              return clusterClient
+                  .submitJob(jobGraph)
+                  .thenApplyAsync(jobID -> (JobClient) new ClusterClientJobClientAdapter<>(
+                      clusterClientProvider,
+                      jobID))
+                  .whenComplete((ignored1, ignored2) -> clusterClient.close());
+          }
+      }
+      ```
+
+      
+
+      **clusterClientFactory的子 	类：远程执行有多种方式：k8s，yarn，standalone**
+
+      ![1585493586485](C:\Users\zxy\AppData\Roaming\Typora\typora-user-images\1585493586485.png)
+
+   6. 杂记：
+
+      1. thenCompose：合并两个CompletableFuture【类似flatMap】
+      2. thenAccept：转换CompletableFuture【类似于map】
+
+2. sql job
+
+### 3、任务是如何运行的
+
+1. 概要：
+
+   1. 任务会分解成多个operator，然后组成图
+      1. operator的属性userFunction为用户自定义的Function，例如自定义的sourceFunction、sinkFunction
+   2. 并行度相同的one to one operator可以合并为operatorChain，一个operatorChain是封装成task
+   3. task运行时，获取headOperator，调用run()，实际上会调用userFunction.run()，然后调用ctx.collect()
+   4. ctx.collect()调用后，会获取operatorChain的算子，依次执行operator
+
+### 4、akka在flink中的使用
+
+
+
+
+
+
+
