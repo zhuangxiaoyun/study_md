@@ -177,6 +177,10 @@ api job, 非sql job
       2. OptimizerPlanEnvironment，则创建StreamPlanEnvironment
          1. 在web 
       3. 其他，则创建LocalEnvironmen
+   4. **StreamExecutionEnvironment的子类重写了的execute()**
+      1. 好像除了StreamContextEnvironment和ScalaShellStreamEnvironment的execute()有点不一样，
+      2. RemoteStreamEnvironment只是捕获了异常
+      3. LocalStreamEnvironment直接调用 父类方法
 
 7. 杂记：
 
@@ -292,7 +296,63 @@ api job, 非sql job
 
       ![1585493586485](C:\Users\zxy\AppData\Roaming\Typora\typora-user-images\1585493586485.png)
 
-   6. 杂记：
+   6. 总结：
+
+      1. JobClient jobClient = super.executeAsync(streamGraph);
+      
+         1. 使用SPI获取PipelineExecutorFactory的子类
+      
+         2. 通过factory获取PipelineExecutor
+      
+         3. 执行streamGraph，获取jobClient
+      
+            1. LocalExecutor
+      
+               1. 在本地启动最小集群MiniCluster
+               2. 获取最小集群客户端clusterClient
+               3. 提交任务
+      
+            2. remoteExecutor、KubernetesSessionClusterExecutor、YarnJobClusterExecutor和YarnSessionClusterExecutor都是AbstractSessionClusterExecutor的子类
+      
+               1. ```java
+                  public RemoteExecutor() {
+                      super(new StandaloneClientFactory());
+                  }
+                  //即：clusterClientFactory = new StandaloneClientFactory()
+                  
+                  public KubernetesSessionClusterExecutor() {
+                      super(new KubernetesClusterClientFactory());
+                  }
+                  
+                  public YarnJobClusterExecutor() {
+                      super(new YarnClusterClientFactory());
+                  }
+                  
+                  public YarnSessionClusterExecutor() {
+                      super(new YarnClusterClientFactory());
+                  }
+                  ```
+      
+                  ```java
+                  //也就是说remoteExecutor执行clusterClient就是new RestClusterClient
+                  public ClusterClientProvider<StandaloneClusterId> retrieve(StandaloneClusterId standaloneClusterId) throws ClusterRetrieveException {
+                      return () -> {
+                          try {
+                              return new RestClusterClient<>(config, standaloneClusterId);
+                          } catch (Exception e) {
+                              throw new RuntimeException("Couldn't retrieve standalone cluster", e);
+                          }
+                      };
+                  }
+                  ```
+      
+                  
+      
+            3. 
+      
+               
+      
+   7. 杂记：
 
       1. thenCompose：合并两个CompletableFuture【类似flatMap】
       2. thenAccept：转换CompletableFuture【类似于map】
