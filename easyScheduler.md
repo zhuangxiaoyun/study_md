@@ -396,6 +396,19 @@ System.getProperty("user.dir") + /logs/processDefineId/processInstanceId/taskIns
 	
 ```
 
+```
+1、判断worker的kill 线程是不是死了
+	现在 /escheduler/tasks_kill 队列里是否还有数据
+	kill任务名称：taskInstanceHost-taskInstanceId
+	添加kill队列的日志【master】  master add kill task :{} id:{} to kill queue
+2、worker kill线程如果kill会有日志：process id:{}, cmd:{}
+
+kill线程池名称：Worker-Kill-Thread-Executor
+
+
+taskInfo.startsWith(OSUtils.getHost())
+```
+
 
 
 #### 代码
