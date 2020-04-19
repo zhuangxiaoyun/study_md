@@ -110,19 +110,20 @@ sink:幂等和事务(预写日志WAL，两段式提交2PC)
 
 ## 14、flink运行
 
-### 1、job运行的环境
+### 1、api job
+
+#### 1、job运行的环境
 
 org.apache.flink.streaming.scala.examples.windowing.WindowWordCount示例入口
 
 api job, 非sql job
 
 1. ```scala
-   
    val env = StreamExecutionEnvironment.getExecutionEnvironment//scala代码获取执行环境
    ```
-
    
 
+   
 2. ```scala
    def getExecutionEnvironment: StreamExecutionEnvironment = {
    	//scala的StreamExecutionEnvironment的构造器需要一个java类型的StreamExecutionEnvironment【JavaEnv是java类型的StreamExecutionEnvironment的别名】
@@ -357,7 +358,174 @@ api job, 非sql job
       1. thenCompose：合并两个CompletableFuture【类似flatMap】
       2. thenAccept：转换CompletableFuture【类似于map】
 
-2. sql job
+### 2、sql job
+
+1. 入口类：org.apache.flink.table.client.SqlClient
+
+2. 大致流程
+
+   ```java
+   //SqlClient.main()
+   1、CliOptions options = CliOptionsParser.parseEmbeddedModeClient(modeArgs);//解析输入的命令行参数
+   2、SqlClient client = new SqlClient(true, options);//创建sql客户端，并启动
+   client.start();
+   	2.1、Executor executor = new LocalExecutor(options.getDefaults(), jars, libDirs);//创建执行器，并启动
+   executor.start();
+   	2.2、Environment sessionEnv = readSessionEnvironment(options.getEnvironment());//读取会话的环境变量
+   	2.3、创建SessionContext
+       2.4、String sessionId = executor.openSession(context);//打开会话
+   		2.4.1、判断contextMap是否存在此sessionId
+           2.4.2、不存在则创建createExecutionContextBuilder(sessionContext).build()
+       2.5、openCli(sessionId, executor);
+   		2.5.1、创建new CliClient(sessionId, executor);
+   		2.5.2、判断命令行参数是否有updateStatement(SQL update statement)
+               2.5.2.1、有则执行：cli.submitUpdate(options.getUpdateStatement());
+   					仅支持两种update statement命令：INSERT_INTO和INSERT_OVERWRITE，执行 callInsert(cmdCall);
+   			2.5.2.1、没有则cli.open();//打开cli交互终端
+   				打开cli交互终端，并提示用户输入sql命令
+                   解析sql命令：org.apache.flink.table.client.cli.CliClient#callCommand
+                   		
+   ```
+
+3. 解析sql命令，callInsert()
+
+   ```java
+   //org.apache.flink.table.client.cli.CliClient#callInsert
+   1、executor.executeUpdate(sessionId, cmdCall.operands[0]);
+   1.1、applyUpdate(context, context.getTableEnvironment(), context.getQueryConfig(), statement);	
+   1.1.1、
+   if (tableEnv instanceof StreamTableEnvironment) {//tableEnv在创建context的时候创建的
+       ((StreamTableEnvironment) tableEnv).sqlUpdate(updateStatement, (StreamQueryConfig) queryConfig);//流
+   } else {
+       tableEnv.sqlUpdate(updateStatement);//批
+   }
+   ```
+
+   ```java
+   1、sqlUpdate(stmt);
+   1.1、
+   List<Operation> operations = parser.parse(stmt);
+   if (operation instanceof ModifyOperation) {
+       List<ModifyOperation> modifyOperations = Collections.singletonList((ModifyOperation) operation);
+       if (isEagerOperationTranslation()) {
+           translate(modifyOperations);
+       } else {
+           buffer(modifyOperations);
+       }
+   }
+   ```
+
+   
+
+   ```java
+   //parser.parse(stmt);
+   //flink old
+   public static Optional<Operation> convert(
+       FlinkPlannerImpl flinkPlanner,
+       CatalogManager catalogManager,
+       SqlNode sqlNode) {
+       .....
+       if (validated instanceof RichSqlInsert) {
+           SqlNodeList targetColumnList = ((RichSqlInsert) validated).getTargetColumnList();
+           if (targetColumnList != null && targetColumnList.size() != 0) {
+               throw new ValidationException("Partial inserts are not supported");
+           }//flink原生的sql解析，限制了insert into语句不能跟着字段
+           return Optional.of(converter.convertSqlInsert((RichSqlInsert) validated));
+       }
+       .....
+   }
+   //blink 不限制insert into 语句
+   if (validated instanceof RichSqlInsert) {
+       return Optional.of(converter.convertSqlInsert((RichSqlInsert) validated));
+   } 
+   ```
+
+   parser的子类：
+
+   ![1586144358306](C:\Users\zxy\AppData\Roaming\Typora\typora-user-images\1586144358306.png)
+
+   
+
+   ```java
+   //translate(modifyOperations);
+   List<Transformation<?>> transformations = planner.translate(modifyOperations);
+   execEnv.apply(transformations);
+   ```
+
+   ```java
+   //flink old 没有优化图节点
+   override def translate(tableOperations: util.List[ModifyOperation])
+       : util.List[Transformation[_]] = {
+       tableOperations.asScala.map(translate).filter(Objects.nonNull).asJava
+     }
+   
+   //blink  优化了图节点
+   override def translate(
+         modifyOperations: util.List[ModifyOperation]): util.List[Transformation[_]] = {
+       if (modifyOperations.isEmpty) {
+         return List.empty[Transformation[_]]
+       }
+       // prepare the execEnv before translating
+       getExecEnv.configure(
+         getTableConfig.getConfiguration,
+         Thread.currentThread().getContextClassLoader)
+       overrideEnvParallelism()
+   
+       val relNodes = modifyOperations.map(translateToRel)
+       val optimizedRelNodes = optimize(relNodes)//blink优化了图节点
+       val execNodes = translateToExecNodePlan(optimizedRelNodes)
+       translateToPlan(execNodes)
+     }
+   ```
+
+   planner的子类：
+
+   ![1586098229714](C:\Users\zxy\AppData\Roaming\Typora\typora-user-images\1586098229714.png)
+
+   ```java
+   //说明：
+   PlannerBase：是blink
+   StreamPlanner：
+   ```
+
+   ```java
+   //PlannerBase
+   override def translate(modifyOperations: util.List[ModifyOperation]): util.List[Transformation[_]] = {
+       if (modifyOperations.isEmpty) {
+         return List.empty[Transformation[_]]
+       }
+       // prepare the execEnv before translating
+       getExecEnv.configure(
+         getTableConfig.getConfiguration,
+         Thread.currentThread().getContextClassLoader)
+       overrideEnvParallelism()
+   
+       val relNodes = modifyOperations.map(translateToRel)
+       val optimizedRelNodes = optimize(relNodes)
+       val execNodes = translateToExecNodePlan(optimizedRelNodes)
+       translateToPlan(execNodes)
+     }
+   ```
+
+   ```java
+   //StreamPlanner
+   override def translate(tableOperations: util.List[ModifyOperation])
+       : util.List[Transformation[_]] = {
+       tableOperations.asScala.map(translate).filter(Objects.nonNull).asJava
+     }
+   ```
+
+   
+
+4. CliOptions options = CliOptionsParser.parseEmbeddedModeClient(modeArgs);
+
+   1. 
+
+5. Executor executor = new LocalExecutor(options.getDefaults(), jars, libDirs);
+
+   1. 
+
+6. 
 
 ### 3、任务是如何运行的
 
@@ -375,5 +543,21 @@ api job, 非sql job
 
 
 
-
+1. 提交任务的过程
+   1. 选择执行环境
+   2. 获取执行器
+   3. 提交任务给jm
+      1. jm在哪是怎么配置的？怎么找到的？
+      2. jm接受到任务后，在任务什么状况下才回复jobClient？
+      3. jobClient提交任务后还会跟JM通信吗？需要保持连接吗？
+         1. 觉得不需要，只要得到任务的状态就可以断开连接了【任务状态：成功，失败。。。】
+2. 解析任务的过程
+   1. api任务是怎么转化成streamGraph的？
+   2. sql任务是怎么转化成streamGraph的？
+   3. 
+3. 问题
+   1. 为什么不把sql的gateway嵌入到flink dashboard
+      1. 因为嵌入后，每个集群需自己管理一个dashboard，提交任务是比较分散的，还需要维护每次提交任务的连接，【非http的情况下，还需处理：如何判断是否已经提交成功，和获取任务返回值都会是一个问题】，若是http的话就比较简单，但是也可能会因为网络问题丢失任务的连接【需考虑的变量太多】
+      2. 独立gateway后，victini只需跟gateway交互，不需要考虑过多的因素【仍然会出现gateway已经提交，但是victini却因为网络抖动，导致任务状态更新失败的情况】，多了一次层连接，必然会多一次风险
+         1. gateway在任务启动获取结果后，是不是应该发一个mq消息呢？以确保万无一失？
 
