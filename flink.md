@@ -299,7 +299,7 @@ api job, 非sql job
 
    6. 总结：
 
-      1. JobClient jobClient = super.executeAsync(streamGraph);
+      1. executor()获取JobClient ：JobClient jobClient = super.executeAsync(streamGraph);
       
          1. 使用SPI获取PipelineExecutorFactory的子类
       
@@ -541,7 +541,53 @@ api job, 非sql job
 
 
 
+# flink 主流程
 
+1. 启动任务
+
+   1. 提交任务到JM的过程
+
+      1. 查找clusterClient的过程
+      2. clusterClient提交任务到 JM 的过程
+         1. JM 接收到请求后做了什么
+         2. 
+
+   2. 图变化【 http://wuchong.me/blog/2016/05/03/flink-internals-overview/ 和 https://www.jianshu.com/p/652f454ca64c 】
+
+      1. streamGraph
+      2. jobGraph
+      3. ExecutionGraph 
+      4. physicalGraph
+
+      ```markdown
+      1、StreamGraph：是根据用户通过 Stream API 编写的代码生成的最初的图。用来表示程序的拓扑结构。
+      2、JobGraph：StreamGraph经过优化后生成了 JobGraph，提交给 JobManager 的数据结构。主要的优化为，将多个符合条件的节点 chain 在一起作为一个节点，这样可以减少数据在节点之间流动所需要的序列化/反序列化/传输消耗。
+      3、ExecutionGraph：JobManager 根据 JobGraph 生成ExecutionGraph。ExecutionGraph是- JobGraph的并行化版本，是调度层最核心的数据结构。
+      4、物理执行图：JobManager 根据 ExecutionGraph 对 Job 进行调度后，在各个TaskManager 上部署 Task 后形成的“图”，并不是一个具体的数据结构
+      ```
+
+      
+
+   3. jar包的处理
+
+      1. jobClient上传jar
+      2. TM拉取jar【还是TM分发jar呢？】
+
+   4. 从savepoint中启动的过程
+
+2. 中断任务
+
+   1. 触发checkpoint
+      1. checkpoint触发逻辑
+      2. checkpoint的存储
+   2. 触发savepoint
+      1. savepoint触发逻辑
+      2. savepoint的存储
+   3. checkpoint和savepoint的区别
+   4. JM和TM的通信
+   5. 
+
+3. 
 
 1. 提交任务的过程
    1. 选择执行环境
