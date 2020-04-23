@@ -539,6 +539,88 @@ api job, 非sql job
 
 ### 4、akka在flink中的使用
 
+## 15、classloader
+
+1. 解析任务并生成图的时候是parentFirst
+
+   1. ExecutionContext
+
+      1. ```java
+         //ExecutionContext中将classloader设置为parentFirst
+         classLoader = FlinkUserCodeClassLoaders.parentFirst(
+         				dependencies.toArray(new URL[dependencies.size()]),
+         				this.getClass().getClassLoader());
+         ```
+
+   2. FlinkUserCodeClassLoaders
+
+      1. ​	
+
+         ```java
+         //父classloader优先
+         public static URLClassLoader parentFirst(URL[] urls, ClassLoader parent) {
+             return new ParentFirstClassLoader(urls, parent);
+         }
+         
+         //子classloader优先
+         public static URLClassLoader childFirst(
+             URL[] urls,
+             ClassLoader parent,
+             String[] alwaysParentFirstPatterns) {
+             return new ChildFirstClassLoader(urls, parent, alwaysParentFirstPatterns);
+         }
+         ```
+
+         
+
+   3. 解析sql
+
+      1. ```java
+         executionContext.wrapClassLoader(() -> {
+             if (tableEnv instanceof StreamTableEnvironment) {
+                 StreamTableEnvironment env = (StreamTableEnvironment) tableEnv;
+                 env.sqlUpdate(functionStatement);
+                 env.sqlUpdate(ddlStatement1);
+                 env.sqlUpdate(ddlStatement2);
+                 env.sqlUpdate(dmlStatement);
+             }
+             return null;
+         });
+         ```
+
+      2. ```java
+         //ExecutionContext的wrapClassLoader方法
+         public <R> R wrapClassLoader(Supplier<R> supplier) {
+             //classLoader
+             try (TemporaryClassLoaderContext tmpCl = new TemporaryClassLoaderContext(classLoader)){
+                 return supplier.get();
+             }
+         }
+         
+         //TemporaryClassLoaderContext在构造的时候是会修改当前线程的上下文，在close的时候恢复线程的上下文
+         public final class TemporaryClassLoaderContext implements AutoCloseable {
+         
+         	/** The previous context class loader to restore on {@link #close()}. */
+         	private final ClassLoader toRestore;
+         
+         	public TemporaryClassLoaderContext(ClassLoader temporaryContextClassLoader) {
+         		this.toRestore = Thread.currentThread().getContextClassLoader();
+         		Thread.currentThread().setContextClassLoader(temporaryContextClassLoader);
+         	}
+         
+         	@Override
+         	public void close() {
+         		Thread.currentThread().setContextClassLoader(toRestore);
+         	}
+         }
+         ```
+
+         
+
+2. 
+
+
+
 
 
 # flink 主流程
